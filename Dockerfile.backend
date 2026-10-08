@@ -1,0 +1,33 @@
+# Production Dockerfile for AarogyaSpeech AI FastAPI Backend Server
+FROM python:3.11-slim
+
+# Prevent Python from writing .pyc files and buffer stdout
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# Install system dependencies (FFmpeg for audio decoding, libsndfile for librosa, libpq for PostgreSQL)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    libsndfile1 \
+    gcc \
+    g++ \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy python dependencies list
+COPY backend/requirements.txt /app/backend/requirements.txt
+
+# Install dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r backend/requirements.txt
+
+# Copy source repository
+COPY . /app
+
+EXPOSE 8000
+
+# Startup script: Wait for database, seed datasets, then launch FastAPI uvicorn server
+CMD ["sh", "-c", "python -m backend.wait_for_db && python -m backend.seed_data && uvicorn backend.main:app --host 0.0.0.0 --port 8000"]

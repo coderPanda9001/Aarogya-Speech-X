@@ -1,0 +1,111 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-hindi: "Noto Sans Devanagari", "Plus Jakarta Sans", sans-serif;
+  --font-display: "Baloo 2", "Noto Sans Devanagari", cursive;
+
+  --color-brand-50: #eefdfb;
+  --color-brand-100: #d3f8f3;
+  --color-brand-200: #aaf0e9;
+  --color-brand-300: #74e2da;
+  --color-brand-400: #38cbc4;
+  --color-brand-500: #16afa9;
+  --color-brand-600: #0d8d8a;
+  --color-brand-700: #10706f;
+  --color-brand-800: #11595a;
+  --color-brand-900: #114a4b;
+
+  --color-ink-500: #64748b;
+  --color-ink-700: #334155;
+  --color-ink-900: #0f172a;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background: #f6f9fc;
+  color: var(--color-ink-900);
+  overflow-x: hidden;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.font-hi {
+  font-family: var(--font-hindi);
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+@keyframes floaty {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+.animate-floaty {
+  animation: floaty 4s ease-in-out infinite;
+}
+
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.9);
+    opacity: 0.7;
+  }
+  70% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.animate-ring {
+  animation: pulse-ring 1.6s cubic-bezier(0.2, 0.6, 0.4, 1) infinite;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-rise {
+  animation: rise 0.45s ease-out both;
+}
+
+@keyframes bar-grow {
+  from {
+    width: 0%;
+  }
+}
+.animate-bar {
+  animation: bar-grow 0.9s ease-out both;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}

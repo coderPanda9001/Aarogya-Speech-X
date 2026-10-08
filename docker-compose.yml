@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  # ------------------------------------------------------------------
+  # 1. PostgreSQL 16 Database Container
+  # ------------------------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    container_name: aarogyaspeech_db
+    restart: always
+    environment:
+      POSTGRES_USER: aarogya
+      POSTGRES_PASSWORD: aarogyapass
+      POSTGRES_DB: aarogyaspeech_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aarogya -d aarogyaspeech_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ------------------------------------------------------------------
+  # 2. FastAPI Python AI Backend Container
+  # ------------------------------------------------------------------
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: aarogyaspeech_backend
+    restart: always
+    environment:
+      - DATABASE_URL=postgresql://aarogya:aarogyapass@db:5432/aarogyaspeech_db
+      - JWT_SECRET=aarogya_speech_jwt_secret_key_2026_super_secret_token
+      - ENVIRONMENT=production
+      - PORT=8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # ------------------------------------------------------------------
+  # 3. React Vite Frontend (Nginx Production Server)
+  # ------------------------------------------------------------------
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: aarogyaspeech_frontend
+    restart: always
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+    driver: local

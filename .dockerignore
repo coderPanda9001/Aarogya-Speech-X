@@ -1,0 +1,16 @@
+node_modules
+.git
+.gitignore
+dist
+build
+*.db
+*.sqlite3
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.vscode
+.gemini
+coverage
+.env
