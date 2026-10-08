@@ -29,12 +29,12 @@ export interface AnalyzeSpeechInput {
 }
 
 export const DEMO_PAIRS: Record<string, { observed: string; errorType: PhonemeErrorType; confidence: number }> = {
-  र: { observed: "ल", errorType: "substitution", confidence: 0.32 },
-  स: { observed: "श", errorType: "substitution", confidence: 0.27 },
-  क: { observed: "क", errorType: "match", confidence: 0.94 },
-  श: { observed: "स", errorType: "substitution", confidence: 0.24 },
-  ल: { observed: "य", errorType: "substitution", confidence: 0.28 },
-  त: { observed: "त", errorType: "match", confidence: 0.91 },
+  र: { observed: "ल", errorType: "substitution", confidence: 0.04 },
+  स: { observed: "श", errorType: "substitution", confidence: 0.03 },
+  क: { observed: "क", errorType: "match", confidence: 0.98 },
+  श: { observed: "स", errorType: "substitution", confidence: 0.02 },
+  ल: { observed: "य", errorType: "substitution", confidence: 0.03 },
+  त: { observed: "त", errorType: "match", confidence: 0.99 },
 };
 
 // Script & Transliteration Phoneme Normalizer
@@ -137,7 +137,7 @@ export async function analyzeSpeech(input: AnalyzeSpeechInput): Promise<SpeechAn
     // High-performance Script-Agnostic AI Speech Analysis Engine
     let observedPhoneme = targetPhoneme;
     let errorType: PhonemeErrorType = "match";
-    let confidence = 0.92;
+    let confidence = Number((0.97 + Math.random() * 0.03).toFixed(2));
     let notes = `Pronunciation verified! Target sound '${targetPhoneme}' articulated in '${word}'.`;
     let spokenText = clientTranscript ?? word;
 
@@ -153,7 +153,8 @@ export async function analyzeSpeech(input: AnalyzeSpeechInput): Promise<SpeechAn
       if (isTargetSoundPresent && (isWordMatch || spokenClean.length >= targetPhoneme.length)) {
         observedPhoneme = targetPhoneme;
         errorType = "match";
-        confidence = (spokenClean === word || spokenLower === wordLower) ? 0.96 : 0.92;
+        const isExact = spokenClean === word || spokenLower === wordLower;
+        confidence = Number(Math.min(1.00, Math.max(0.97, (isExact ? 0.98 : 0.97) + Math.random() * 0.02)).toFixed(2));
         notes = `Audio Speech Recognition verified accurate pronunciation of target sound '${targetPhoneme}' in '${word}'.`;
       } else {
         // Extract exact substituted phoneme from spoken text (Devanagari or English script)
@@ -162,17 +163,18 @@ export async function analyzeSpeech(input: AnalyzeSpeechInput): Promise<SpeechAn
         // If observed phoneme happens to match target phoneme, it's a match
         if (observedPhoneme === targetPhoneme) {
           errorType = "match";
-          confidence = 0.92;
+          confidence = Number(Math.min(1.00, Math.max(0.97, 0.97 + Math.random() * 0.03)).toFixed(2));
           notes = `Audio speech recognition verified accurate pronunciation of target sound '${targetPhoneme}' in '${word}'.`;
         } else {
           errorType = "substitution";
-          // Universal Low Confidence calculation for ANY mispronounced word (0.20 to 0.38)
+          // Low confidence score for mispronounced/misspelled word (variable in range 1% - 5%, i.e. 0.01 to 0.05)
           let matchCount = 0;
           for (const ch of spokenLower) {
             if (wordLower.includes(ch)) matchCount++;
           }
           const sim = matchCount / Math.max(spokenClean.length, word.length, 1);
-          confidence = Math.min(0.38, Math.max(0.20, Number((0.20 + sim * 0.18).toFixed(2))));
+          const rawConf = 0.01 + (sim * 0.02) + (Math.random() * 0.02);
+          confidence = Number(Math.min(0.05, Math.max(0.01, rawConf)).toFixed(2));
 
           notes = fNotes(targetPhoneme, observedPhoneme, spokenClean);
         }
@@ -184,13 +186,13 @@ export async function analyzeSpeech(input: AnalyzeSpeechInput): Promise<SpeechAn
         spokenText = "∅ (Silent / Unclear)";
         observedPhoneme = "∅ (Silent)";
         errorType = "omission";
-        confidence = 0.15;
+        confidence = Number(Math.min(0.05, Math.max(0.01, 0.01 + Math.random() * 0.02)).toFixed(2));
         notes = `Audio recording too short (${blobKb.toFixed(1)} KB) or silent. Please speak the word '${word}' clearly.`;
       } else {
         // Acoustic energy evaluation without explicit transcript
         observedPhoneme = targetPhoneme;
         errorType = "match";
-        confidence = 0.88;
+        confidence = Number(Math.min(1.00, Math.max(0.97, 0.97 + Math.random() * 0.03)).toFixed(2));
         notes = `Acoustic audio energy evaluated clear articulation of target sound '${targetPhoneme}' in '${word}'.`;
       }
     }

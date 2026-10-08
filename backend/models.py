@@ -14,6 +14,8 @@ class UserModel(Base):
     hashed_password = Column(String, nullable=False)
     name = Column(String, nullable=False)
     role = Column(String, nullable=False, default="child")  # child, parent, therapist, admin
+    phone = Column(String, nullable=True, index=True)
+    parent_phone = Column(String, nullable=True, index=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
@@ -32,6 +34,7 @@ class ChildModel(Base):
     streak_days = Column(Integer, default=1)
     therapist_id = Column(String, nullable=True)
     parent_id = Column(String, nullable=True)
+    parent_phone = Column(String, nullable=True, index=True)
     needs_review = Column(Boolean, default=False)
     sessions_this_week = Column(Integer, default=0)
     weekly_goal = Column(Integer, default=6)

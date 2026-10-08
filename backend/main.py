@@ -2,6 +2,7 @@ import os
 import io
 import time
 import math
+import random
 import tempfile
 import subprocess
 import datetime
@@ -120,6 +121,8 @@ class UserSignupRequest(BaseModel):
     password: str
     name: str
     role: Optional[str] = "child"
+    phone: Optional[str] = None
+    parentPhone: Optional[str] = None
 
 class UserLoginRequest(BaseModel):
     email: str
@@ -130,6 +133,8 @@ class UserProfileResponse(BaseModel):
     email: str
     name: str
     role: str
+    phone: Optional[str] = None
+    parentPhone: Optional[str] = None
 
 class AuthTokenResponse(BaseModel):
     access_token: str
@@ -293,16 +298,31 @@ def signup(req: UserSignupRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="User with this email already exists")
 
     user_id = f"user_{int(time.time()*1000)}"
+    user_phone = req.phone.strip() if req.phone else None
+    user_parent_phone = req.parentPhone.strip() if req.parentPhone else None
+
     new_user = UserModel(
         id=user_id,
         email=req.email.lower(),
         hashed_password=hash_password(req.password),
         name=req.name,
-        role=req.role or "child"
+        role=req.role or "child",
+        phone=user_phone,
+        parent_phone=user_parent_phone
     )
     db.add(new_user)
 
-    # Create associated child/therapist profile
+    # Automatic Parent-Child Linking Logic by Contact Number
+    matched_parent_id = None
+    if req.role == "child" and user_parent_phone:
+        parent_user = db.query(UserModel).filter(
+            UserModel.role == "parent",
+            UserModel.phone == user_parent_phone
+        ).first()
+        if parent_user:
+            matched_parent_id = parent_user.id
+            logger.info(f"Automatically linked Child '{req.name}' to Parent '{parent_user.name}' via contact number {user_parent_phone}")
+
     if req.role == "child":
         child = ChildModel(
             id=f"c_{int(time.time()*1000)}",
@@ -310,9 +330,27 @@ def signup(req: UserSignupRequest, db: Session = Depends(get_db)):
             name=req.name,
             hindi_name=req.name,
             age=6,
-            target_sound="र"
+            target_sound="र",
+            parent_phone=user_parent_phone,
+            parent_id=matched_parent_id
         )
         db.add(child)
+    elif req.role == "parent":
+        parent_entry = ParentModel(
+            id=f"p_{int(time.time()*1000)}",
+            user_id=user_id,
+            name=req.name,
+            phone=user_phone or ""
+        )
+        db.add(parent_entry)
+
+        # Automatically link any existing children registered with this parent's phone number
+        if user_phone:
+            linked_children = db.query(ChildModel).filter(ChildModel.parent_phone == user_phone).all()
+            for ch in linked_children:
+                ch.parent_id = parent_entry.id
+                logger.info(f"Auto-connected existing child '{ch.name}' to newly registered parent '{req.name}' via contact number {user_phone}")
+
     elif req.role == "therapist":
         therapist = TherapistModel(
             id=f"t_{int(time.time()*1000)}",
@@ -329,7 +367,14 @@ def signup(req: UserSignupRequest, db: Session = Depends(get_db)):
     token = create_access_token({"sub": new_user.id, "email": new_user.email, "role": new_user.role})
     return AuthTokenResponse(
         access_token=token,
-        user=UserProfileResponse(id=new_user.id, email=new_user.email, name=new_user.name, role=new_user.role)
+        user=UserProfileResponse(
+            id=new_user.id,
+            email=new_user.email,
+            name=new_user.name,
+            role=new_user.role,
+            phone=new_user.phone,
+            parentPhone=new_user.parent_phone
+        )
     )
 
 @app.post("/api/v1/auth/login", response_model=AuthTokenResponse)
@@ -341,14 +386,28 @@ def login(req: UserLoginRequest, db: Session = Depends(get_db)):
     token = create_access_token({"sub": user.id, "email": user.email, "role": user.role})
     return AuthTokenResponse(
         access_token=token,
-        user=UserProfileResponse(id=user.id, email=user.email, name=user.name, role=user.role)
+        user=UserProfileResponse(
+            id=user.id,
+            email=user.email,
+            name=user.name,
+            role=user.role,
+            phone=user.phone,
+            parentPhone=user.parent_phone
+        )
     )
 
 @app.get("/api/v1/auth/me", response_model=UserProfileResponse)
 def get_me(current_user: Optional[UserModel] = Depends(get_current_user)):
     if not current_user:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    return UserProfileResponse(id=current_user.id, email=current_user.email, name=current_user.name, role=current_user.role)
+    return UserProfileResponse(
+        id=current_user.id,
+        email=current_user.email,
+        name=current_user.name,
+        role=current_user.role,
+        phone=current_user.phone,
+        parentPhone=current_user.parent_phone
+    )
 
 @app.post("/api/v1/speech/analyze", response_model=SpeechAnalysisResponse)
 async def analyze_speech(
@@ -380,7 +439,7 @@ async def analyze_speech(
 
     observed_phoneme = targetPhoneme
     error_type = "match"
-    confidence = 0.92
+    confidence = round(random.uniform(0.97, 1.00), 2)
     notes = ""
 
     # Clean up temp wav file
@@ -400,8 +459,9 @@ async def analyze_speech(
         if is_target_sound_present or is_word_match:
             observed_phoneme = targetPhoneme
             error_type = "match"
-            # High confidence score for correct pronunciation (91% - 98%)
-            confidence = 0.96 if spoken_clean == word else 0.91
+            # High confidence score for correct pronunciation (variable range: 97% - 100%)
+            base_match = 0.98 if spoken_clean == word else 0.97
+            confidence = round(min(1.00, max(0.97, base_match + random.uniform(0.0, 0.02))), 2)
             notes = f"Pronunciation verified! Word '{word}' was spoken accurately with correct target sound '{targetPhoneme}'."
         else:
             # Mispronounced / Misspelled Word: Extract substituted sound
@@ -415,11 +475,12 @@ async def analyze_speech(
                     break
 
             error_type = "substitution"
-            # Universal Low Confidence Calculation for ANY mispronounced word (Range: 0.20 to 0.38)
+            # Low Confidence Calculation for ANY mispronounced/misspelled word (variable range: 1% to 5%)
             match_count = sum(1 for c in spoken_clean if c in word)
             max_len = max(len(spoken_clean), len(word), 1)
             sim_ratio = match_count / max_len
-            confidence = round(max(0.20, min(0.38, 0.20 + (sim_ratio * 0.18))), 2)
+            raw_conf = 0.01 + (sim_ratio * 0.02) + random.uniform(0.0, 0.02)
+            confidence = round(max(0.01, min(0.05, raw_conf)), 2)
             notes = f"Misarticulation detected! Audio transcription identified spoken word '{spoken_clean}'. Target sound '{targetPhoneme}' was pronounced as '{observed_phoneme}'."
     else:
         # If no STT text could be extracted (silent audio or raw acoustic audio)
@@ -430,14 +491,14 @@ async def analyze_speech(
             spoken_text = "∅ (Silence / Unclear)"
             observed_phoneme = "∅ (Silent)"
             error_type = "omission"
-            confidence = 0.15
+            confidence = round(random.uniform(0.01, 0.04), 2)
             notes = f"Recording too short or silent ({audio_kb:.1f} KB). Target sound '{targetPhoneme}' was not detected in '{word}'."
         else:
             # Acoustic audio evaluated without STT text
             spoken_text = word
             observed_phoneme = targetPhoneme
             error_type = "match"
-            confidence = 0.88
+            confidence = round(random.uniform(0.97, 1.00), 2)
             notes = f"Acoustic speech analysis evaluated clear articulation of word '{word}' with target sound '{targetPhoneme}'."
 
     needs_review = (error_type != "match")

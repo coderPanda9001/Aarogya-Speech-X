@@ -16,21 +16,23 @@ import { useApp } from "../../store/AppContext";
 import { MATERIALS, PROGRESS_HISTORY, RECOMMENDED_ACTIVITIES, WEEKLY_PRACTICE } from "../../data/demoData";
 
 export default function ChildDashboard() {
-  const { activeChild, childProgress, streakDays, level, attempts, observations, isFreshAccount, updateTargetSound } = useApp();
+  const { activeChild, childProgress, streakDays, level, attempts, observations, isFreshAccount, weeklyPractice, updateTargetSound } = useApp();
   const navigate = useNavigate();
   const todayWord = MATERIALS[0];
 
-  const chartData = isFreshAccount
+  const chartData = attempts.length === 0
     ? [
         { label: "W1 Baseline", accuracy: 0 },
         { label: "W2 Baseline", accuracy: 0 },
         { label: "W3 Baseline", accuracy: 0 },
-        { label: "Current Session", accuracy: childProgress },
+        { label: "Current Session", accuracy: 0 },
       ]
-    : PROGRESS_HISTORY.map((p, i) => ({
-        ...p,
-        accuracy: i === PROGRESS_HISTORY.length - 1 ? childProgress : p.accuracy,
-      }));
+    : [
+        { label: "W1 Baseline", accuracy: 0 },
+        { label: "W2 Baseline", accuracy: Math.round(childProgress * 0.3) },
+        { label: "W3 Baseline", accuracy: Math.round(childProgress * 0.6) },
+        { label: "Current Session", accuracy: childProgress },
+      ];
 
   return (
     <div>
@@ -41,7 +43,7 @@ export default function ChildDashboard() {
         right={
           <>
             {isFreshAccount ? (
-              <Badge tone="emerald">🌱 Fresh User Account (0% Baseline)</Badge>
+              <Badge tone="emerald">🌱 Fresh User Account ({childProgress}% Progress)</Badge>
             ) : (
               <DemoBadge label="Curated Therapy Content" />
             )}
@@ -102,7 +104,9 @@ export default function ChildDashboard() {
               <p className="font-display text-lg font-bold text-slate-900">Speech Practice Progress</p>
               <p className="text-xs text-slate-500">Accuracy % of the target sound across recent weeks</p>
             </div>
-            <Badge tone="green">+34% since week 1</Badge>
+            <Badge tone={childProgress > 0 ? "green" : "slate"}>
+              {attempts.length > 0 ? `+${childProgress}% since start` : "0% Baseline"}
+            </Badge>
           </div>
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
@@ -132,10 +136,10 @@ export default function ChildDashboard() {
 
         <Card className="flex flex-col items-center justify-center gap-4 text-center">
           <p className="font-display text-lg font-bold text-slate-900">Sound Mastery</p>
-          <ProgressRing value={childProgress} sublabel="र mastery" size={132} />
+          <ProgressRing value={childProgress} sublabel={`${activeChild.targetSound} mastery`} size={132} />
           <div className="w-full rounded-xl bg-brand-50 p-3 text-left ring-1 ring-brand-100 ring-inset">
             <p className="text-[10px] font-bold text-brand-700 uppercase">Next level</p>
-            <p className="text-sm font-semibold text-slate-800">Sentence level with र words</p>
+            <p className="text-sm font-semibold text-slate-800">Sentence level with {activeChild.targetSound} words</p>
           </div>
           <Button variant="secondary" className="w-full" onClick={() => navigate("/child/digital-twin")}>
             View Speech Profile <ArrowRight size={16} />
@@ -151,7 +155,7 @@ export default function ChildDashboard() {
           </div>
           <div className="h-52 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={WEEKLY_PRACTICE} margin={{ top: 5, right: 8, left: -22, bottom: 0 }}>
+              <BarChart data={weeklyPractice} margin={{ top: 5, right: 8, left: -22, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
                 <XAxis dataKey="day" tick={{ fontSize: 11, fill: "#64748b" }} />
                 <YAxis tick={{ fontSize: 11, fill: "#64748b" }} />

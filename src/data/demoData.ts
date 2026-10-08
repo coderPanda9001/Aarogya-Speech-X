@@ -261,14 +261,14 @@ export const MATERIALS: TherapyMaterial[] = [
 ];
 
 export const PHONEME_OBSERVATIONS: PhonemeObservation[] = [
-  { id: "o1", childId: "c1", expected: "र", observed: "ल", errorType: "substitution", confidence: 0.32, word: "रथ", position: "Initial", date: "2026-02-14", needsTherapistReview: true, isDemo: true },
-  { id: "o2", childId: "c1", expected: "स", observed: "श", errorType: "substitution", confidence: 0.27, word: "सूरज", position: "Initial", date: "2026-02-13", needsTherapistReview: false, isDemo: true },
-  { id: "o3", childId: "c1", expected: "क", observed: "क", errorType: "match", confidence: 0.91, word: "कमल", position: "Initial", date: "2026-02-12", needsTherapistReview: false, isDemo: true },
-  { id: "o4", childId: "c2", expected: "स", observed: "श", errorType: "substitution", confidence: 0.31, word: "स्कूल", position: "Initial", date: "2026-02-14", needsTherapistReview: false, isDemo: true },
-  { id: "o5", childId: "c2", expected: "ल", observed: "य", errorType: "substitution", confidence: 0.28, word: "मछली", position: "Medial", date: "2026-02-11", needsTherapistReview: false, isDemo: true },
-  { id: "o6", childId: "c3", expected: "र", observed: "र", errorType: "match", confidence: 0.88, word: "राजा", position: "Initial", date: "2026-02-14", needsTherapistReview: false, isDemo: true },
-  { id: "o7", childId: "c4", expected: "श", observed: "स", errorType: "substitution", confidence: 0.24, word: "शेर", position: "Initial", date: "2026-02-13", needsTherapistReview: true, isDemo: true },
-  { id: "o8", childId: "c5", expected: "ल", observed: "न", errorType: "substitution", confidence: 0.25, word: "गमला", position: "Final", date: "2026-02-10", needsTherapistReview: false, isDemo: true },
+  { id: "o1", childId: "c1", expected: "र", observed: "ल", errorType: "substitution", confidence: 0.04, word: "रथ", position: "Initial", date: "2026-02-14", needsTherapistReview: true, isDemo: true },
+  { id: "o2", childId: "c1", expected: "स", observed: "श", errorType: "substitution", confidence: 0.03, word: "सूरज", position: "Initial", date: "2026-02-13", needsTherapistReview: false, isDemo: true },
+  { id: "o3", childId: "c1", expected: "क", observed: "क", errorType: "match", confidence: 0.98, word: "कमल", position: "Initial", date: "2026-02-12", needsTherapistReview: false, isDemo: true },
+  { id: "o4", childId: "c2", expected: "स", observed: "श", errorType: "substitution", confidence: 0.04, word: "स्कूल", position: "Initial", date: "2026-02-14", needsTherapistReview: false, isDemo: true },
+  { id: "o5", childId: "c2", expected: "ल", observed: "य", errorType: "substitution", confidence: 0.02, word: "मछली", position: "Medial", date: "2026-02-11", needsTherapistReview: false, isDemo: true },
+  { id: "o6", childId: "c3", expected: "र", observed: "र", errorType: "match", confidence: 0.97, word: "राजा", position: "Initial", date: "2026-02-14", needsTherapistReview: false, isDemo: true },
+  { id: "o7", childId: "c4", expected: "श", observed: "स", errorType: "substitution", confidence: 0.01, word: "शेर", position: "Initial", date: "2026-02-13", needsTherapistReview: true, isDemo: true },
+  { id: "o8", childId: "c5", expected: "ल", observed: "न", errorType: "substitution", confidence: 0.03, word: "गमला", position: "Final", date: "2026-02-10", needsTherapistReview: false, isDemo: true },
 ];
 
 export const CONFUSION_LABELS = ["र", "ल", "स"];

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowRight, Lock, Mail } from "lucide-react";
+import { ArrowRight, Lock, Mail, Phone } from "lucide-react";
 import { Badge, Button, Card } from "../components/ui";
 import { useApp } from "../store/AppContext";
 import { authService } from "../services/api";
@@ -25,6 +25,8 @@ export default function Login() {
   const [name, setName] = useState("");
   const [signupRole, setSignupRole] = useState<Role>("child");
   const [targetSound, setTargetSoundInput] = useState<string>("र");
+  const [contactPhone, setContactPhone] = useState("9876543210");
+  const [parentContactPhone, setParentContactPhone] = useState("9876543210");
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -38,7 +40,14 @@ export default function Login() {
         setRole(res.user.role);
         navigate(`/${res.user.role}/dashboard`);
       } else {
-        const res = await authService.signup(email, password, name || email.split("@")[0], signupRole);
+        const res = await authService.signup(
+          email,
+          password,
+          name || email.split("@")[0],
+          signupRole,
+          signupRole === "child" ? undefined : contactPhone,
+          signupRole === "child" ? parentContactPhone : contactPhone
+        );
         setCurrentUser(res.user);
         setRole(res.user.role);
         if (signupRole === "child" && targetSound) {
@@ -88,9 +97,9 @@ export default function Login() {
             {mode === "login" ? "Account Sign In" : "Register New Account"}
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            Real User Authentication backed by JWT Tokens & SQLite Database.
+            Real User Authentication backed by JWT Tokens & Database Storage Sync.
           </p>
-          <Badge tone="emerald" className="mt-3">⚡ Real JWT Auth · SQLite Database Connected</Badge>
+          <Badge tone="emerald" className="mt-3">⚡ Real JWT Auth · Storage Sync Connected</Badge>
         </div>
 
         <div className="grid gap-6 lg:grid-cols-2">
@@ -141,6 +150,44 @@ export default function Login() {
                       <option value="therapist">Speech Therapist (Clinical Review)</option>
                     </select>
                   </div>
+                  {signupRole === "child" ? (
+                    <div>
+                      <label className="text-xs font-bold text-slate-600">Parent Contact Number (अभिभावक का फोन नंबर)</label>
+                      <div className="relative mt-1">
+                        <Phone size={16} className="absolute left-3 top-3 text-slate-400" />
+                        <input
+                          type="tel"
+                          required
+                          value={parentContactPhone}
+                          onChange={(e) => setParentContactPhone(e.target.value)}
+                          placeholder="e.g. 9876543210"
+                          className="w-full rounded-xl border border-slate-200 py-2 pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        />
+                      </div>
+                      <p className="mt-1 text-[11px] font-medium text-brand-700">
+                        🔗 This contact number automatically connects this child to the parent's dashboard!
+                      </p>
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="text-xs font-bold text-slate-600">Mobile / Contact Number (आपका मोबाइल नंबर)</label>
+                      <div className="relative mt-1">
+                        <Phone size={16} className="absolute left-3 top-3 text-slate-400" />
+                        <input
+                          type="tel"
+                          required
+                          value={contactPhone}
+                          onChange={(e) => setContactPhone(e.target.value)}
+                          placeholder="e.g. 9876543210"
+                          className="w-full rounded-xl border border-slate-200 py-2 pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        />
+                      </div>
+                      <p className="mt-1 text-[11px] font-medium text-brand-700">
+                        🔗 Children who created an account with this number will be automatically added to your dashboard.
+                      </p>
+                    </div>
+                  )}
+
                   {signupRole === "child" && (
                     <div>
                       <label className="text-xs font-bold text-slate-600">Target Sound for Practice (लक्ष्य ध्वनि)</label>

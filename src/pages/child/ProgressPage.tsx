@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowRight, Mic } from "lucide-react";
 import {
@@ -20,24 +21,93 @@ import {
 } from "recharts";
 import { Badge, Button, Card, EmptyState, PageHeader, ProgressRing, StatCard } from "../../components/ui";
 import { useApp } from "../../store/AppContext";
-import { MOST_PRACTICED_SOUNDS, PROGRESS_HISTORY, SPEECH_PROFILE_RADAR, WEEKLY_PRACTICE } from "../../data/demoData";
 
 export default function ProgressPage() {
-  const { attempts, childProgress, streakDays, activeChild, observations } = useApp();
+  const { attempts, childProgress, streakDays, activeChild, observations, weeklyPractice, level } = useApp();
   const navigate = useNavigate();
 
-  const chartData = PROGRESS_HISTORY.map((p, i) => ({
-    ...p,
-    accuracy: i === PROGRESS_HISTORY.length - 1 ? childProgress : p.accuracy,
-  }));
+  // Dynamic Speech Practice Progress (Area Chart)
+  const chartData = useMemo(() => {
+    const labels = ["Week 1", "Week 2", "Week 3", "Week 4", "Week 5", "Week 6", "Current Session"];
+    if (attempts.length === 0) {
+      return labels.map((label) => ({ label, accuracy: 0 }));
+    }
+    const points: { label: string; accuracy: number }[] = [];
+    const stepCount = labels.length;
+    for (let i = 0; i < stepCount - 1; i++) {
+      const sliceEnd = Math.max(1, Math.floor(((i + 1) / (stepCount - 1)) * attempts.length));
+      const slice = attempts.slice(0, sliceEnd);
+      const matches = slice.filter((a) => a.errorType === "match").length;
+      const acc = Math.round((matches / slice.length) * 100);
+      points.push({ label: labels[i], accuracy: acc });
+    }
+    points.push({ label: "Current Session", accuracy: childProgress });
+    return points;
+  }, [attempts, childProgress]);
 
-  const soundMastery = [
-    { sound: "र", value: childProgress },
-    { sound: "स", value: 64 },
-    { sound: "क", value: 81 },
-    { sound: "श", value: 45 },
-    { sound: "ल", value: 58 },
-  ];
+  // Dynamic Sound Mastery (Bar Chart)
+  const soundMastery = useMemo(() => {
+    const sounds = ["र", "स", "क", "श", "ल", "त"];
+    if (attempts.length === 0) {
+      return sounds.map((sound) => ({ sound, value: 0 }));
+    }
+    return sounds.map((sound) => {
+      const soundAtts = attempts.filter(
+        (a) => a.targetSound === sound || a.word.includes(sound)
+      );
+      if (soundAtts.length === 0) {
+        return { sound, value: 0 };
+      }
+      const matches = soundAtts.filter((a) => a.errorType === "match").length;
+      const val = Math.round((matches / soundAtts.length) * 100);
+      return { sound, value: val };
+    });
+  }, [attempts]);
+
+  // Dynamic Speech Skills Radar
+  const radarData = useMemo(() => {
+    if (attempts.length === 0) {
+      return [
+        { skill: "Sound Production", score: 0 },
+        { skill: "Word Practice", score: 0 },
+        { skill: "Sentence Practice", score: 0 },
+        { skill: "Story Practice", score: 0 },
+        { skill: "Conversation", score: 0 },
+        { skill: "Consistency", score: 0 },
+      ];
+    }
+    const matches = attempts.filter((a) => a.errorType === "match").length;
+    const accuracy = Math.round((matches / attempts.length) * 100);
+
+    return [
+      { skill: "Sound Production", score: accuracy },
+      { skill: "Word Practice", score: Math.min(100, attempts.length * 15) },
+      { skill: "Sentence Practice", score: level === "Sentences" ? Math.min(100, matches * 25) : Math.min(40, attempts.length * 5) },
+      { skill: "Story Practice", score: Math.min(100, attempts.length * 4) },
+      { skill: "Conversation", score: Math.min(100, attempts.length * 3) },
+      { skill: "Consistency", score: Math.min(100, streakDays * 20) },
+    ];
+  }, [attempts, level, streakDays]);
+
+  // Dynamic Most Practiced Sounds
+  const mostPracticedSounds = useMemo(() => {
+    const sounds = ["र", "स", "क", "श", "ल", "त"];
+    const total = attempts.length;
+    if (total === 0) {
+      return sounds.map((sound) => ({ sound, count: 0, percent: 0 }));
+    }
+
+    const counts = sounds.map((sound) => {
+      const count = attempts.filter((a) => a.targetSound === sound).length;
+      return {
+        sound,
+        count,
+        percent: Math.round((count / total) * 100),
+      };
+    });
+
+    return counts.sort((a, b) => b.count - a.count);
+  }, [attempts]);
 
   return (
     <div>
@@ -57,7 +127,12 @@ export default function ProgressPage() {
 
       <div className="mt-6 grid gap-5 lg:grid-cols-2">
         <Card>
-          <p className="font-display text-lg font-bold text-slate-900">Speech Practice Progress</p>
+          <div className="mb-2 flex items-center justify-between">
+            <p className="font-display text-lg font-bold text-slate-900">Speech Practice Progress</p>
+            <Badge tone={childProgress > 0 ? "green" : "slate"}>
+              {attempts.length > 0 ? `${childProgress}% Accuracy` : "0% Baseline"}
+            </Badge>
+          </div>
           <p className="text-xs text-slate-500">Target sound accuracy (%) over recent weeks</p>
           <div className="mt-3 h-64">
             <ResponsiveContainer width="100%" height="100%">
@@ -83,7 +158,7 @@ export default function ProgressPage() {
           <p className="text-xs text-slate-500">Consistency matters more than long sessions</p>
           <div className="mt-3 h-64">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={WEEKLY_PRACTICE} margin={{ top: 5, right: 8, left: -18, bottom: 0 }}>
+              <LineChart data={weeklyPractice} margin={{ top: 5, right: 8, left: -18, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
                 <XAxis dataKey="day" tick={{ fontSize: 11, fill: "#64748b" }} />
                 <YAxis tick={{ fontSize: 11, fill: "#64748b" }} />
@@ -117,7 +192,7 @@ export default function ProgressPage() {
           <p className="text-xs text-slate-500">Self-progress profile (not a clinical score)</p>
           <div className="mt-3 h-64">
             <ResponsiveContainer width="100%" height="100%">
-              <RadarChart data={SPEECH_PROFILE_RADAR} outerRadius="72%">
+              <RadarChart data={radarData} outerRadius="72%">
                 <PolarGrid stroke="#e2e8f0" />
                 <PolarAngleAxis dataKey="skill" tick={{ fontSize: 10, fill: "#475569" }} />
                 <Radar dataKey="score" stroke="#7c9cf5" fill="#7c9cf5" fillOpacity={0.35} />
@@ -183,7 +258,7 @@ export default function ProgressPage() {
           <Card>
             <p className="font-display font-bold text-slate-900">Most Practiced Sounds</p>
             <ul className="mt-3 space-y-2.5">
-              {MOST_PRACTICED_SOUNDS.map((s) => (
+              {mostPracticedSounds.map((s) => (
                 <li key={s.sound}>
                   <div className="flex items-center justify-between text-sm">
                     <span className="font-hi font-bold text-slate-800">{s.sound}</span>
