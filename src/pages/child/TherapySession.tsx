@@ -36,6 +36,13 @@ export default function TherapySession() {
   const [listened, setListened] = useState(false);
   const [playedBack, setPlayedBack] = useState(false);
   const [spokenUnsupported, setSpokenUnsupported] = useState(false);
+  const [customTranscript, setCustomTranscript] = useState<string>("");
+
+  useEffect(() => {
+    if (recorder.spokenTranscript) {
+      setCustomTranscript(recorder.spokenTranscript);
+    }
+  }, [recorder.spokenTranscript]);
 
   useEffect(() => {
     setWordId(initialWordId);
@@ -46,6 +53,7 @@ export default function TherapySession() {
     setPlayedBack(false);
     setPhase("idle");
     setAnalysisError(null);
+    setCustomTranscript("");
     recorder.reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wordId]);
@@ -65,7 +73,7 @@ export default function TherapySession() {
         targetPhoneme: material.targetSound,
         word: material.word,
         position: material.position,
-        clientTranscript: recorder.spokenTranscript,
+        clientTranscript: customTranscript.trim() || recorder.spokenTranscript,
       });
       logAttempt(result);
       setPhase("result");
@@ -163,12 +171,15 @@ export default function TherapySession() {
           </div>
 
           {recorder.status === "recording" && (
-            <div className="mt-4 flex items-center justify-center gap-3 rounded-xl bg-rose-50 px-4 py-3 ring-1 ring-rose-200 ring-inset">
-              <span className="relative grid size-3 place-items-center">
-                <span className="animate-ring absolute size-3 rounded-full bg-rose-500" />
-                <span className="size-2.5 rounded-full bg-rose-600" />
-              </span>
-              <p className="text-sm font-semibold text-rose-700">Recording… speak the word “{material.word}” now</p>
+            <div className="mt-4 flex flex-col items-center justify-center gap-2 rounded-xl bg-rose-50/80 px-4 py-3 ring-1 ring-rose-200 ring-inset">
+              <div className="flex items-center gap-1.5">
+                <span className="animate-bounce size-1.5 rounded-full bg-rose-600" style={{ animationDelay: "0ms" }} />
+                <span className="animate-bounce size-2.5 rounded-full bg-rose-600" style={{ animationDelay: "150ms" }} />
+                <span className="animate-bounce size-3.5 rounded-full bg-rose-600" style={{ animationDelay: "300ms" }} />
+                <span className="animate-bounce size-2.5 rounded-full bg-rose-600" style={{ animationDelay: "150ms" }} />
+                <span className="animate-bounce size-1.5 rounded-full bg-rose-600" style={{ animationDelay: "0ms" }} />
+              </div>
+              <p className="text-sm font-bold text-rose-700">Listening to microphone… speak “{material.word}” now!</p>
             </div>
           )}
 
@@ -184,14 +195,52 @@ export default function TherapySession() {
           )}
 
           {recorder.audioUrl && (
-            <div className="mt-4 rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200 ring-inset">
-              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <div className="mt-4 rounded-xl bg-slate-50 p-3.5 ring-1 ring-slate-200 ring-inset space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs font-bold text-slate-600 uppercase">
                   Your recording {(recorder.durationMs / 1000).toFixed(1)}s
                 </p>
                 {playedBack && <Badge tone="green">Played back — does it sound correct?</Badge>}
               </div>
               <audio id="playback" controls src={recorder.audioUrl} className="w-full" />
+
+              <div className="rounded-xl bg-white p-3 ring-1 ring-purple-200 ring-inset">
+                <div className="flex items-center justify-between mb-1">
+                  <label htmlFor="transcript-input" className="text-xs font-bold text-purple-700 flex items-center gap-1.5">
+                    <span>🎙️ Spoken Speech Detected:</span>
+                  </label>
+                  <span className="text-[10px] text-slate-400 font-medium">Auto-captured from mic (editable)</span>
+                </div>
+                <input
+                  id="transcript-input"
+                  type="text"
+                  value={customTranscript}
+                  onChange={(e) => setCustomTranscript(e.target.value)}
+                  placeholder={`Word spoken (e.g. "${material.word}" or mispronounced sound like "सजा")`}
+                  className="w-full rounded-lg border border-slate-200 bg-slate-50/50 px-3 py-2 text-sm font-bold text-purple-900 placeholder-slate-400 focus:border-purple-500 focus:bg-white focus:outline-none"
+                />
+                
+                <div className="mt-2.5 flex flex-wrap items-center gap-2 border-t border-purple-100 pt-2">
+                  <span className="text-[11px] font-semibold text-slate-500">Quick Test Input:</span>
+                  <button
+                    type="button"
+                    onClick={() => setCustomTranscript(material.word)}
+                    className="rounded-lg bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100 transition-colors"
+                  >
+                    ✓ Correct ("{material.word}")
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const alt = material.targetSound === "र" ? "सजा" : (material.targetSound === "स" ? "शूराज" : "तमा");
+                      setCustomTranscript(alt);
+                    }}
+                    className="rounded-lg bg-rose-50 px-2.5 py-1 text-xs font-bold text-rose-700 ring-1 ring-rose-200 hover:bg-rose-100 transition-colors"
+                  >
+                    ⚠️ Mispronounced Test
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 

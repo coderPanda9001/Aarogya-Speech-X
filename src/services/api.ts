@@ -1,5 +1,8 @@
+/// <reference types="vite/client" />
+
 export const getApiBase = (): string => {
-  const envUrl = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL;
+  const env = (import.meta as any).env || {};
+  const envUrl = env.VITE_API_URL || env.VITE_API_BASE_URL;
   if (envUrl) {
     const clean = envUrl.replace(/\/$/, "");
     return clean.endsWith("/api/v1") ? clean : `${clean}/api/v1`;

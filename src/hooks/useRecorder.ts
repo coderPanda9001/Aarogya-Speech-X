@@ -50,6 +50,22 @@ export function useRecorder(): RecorderState {
     });
   }, []);
 
+  // Pre-warm SpeechRecognition instance on mount for immediate first-attempt capture
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SpeechRecognition && !speechRecognitionRef.current) {
+      try {
+        const sr = new SpeechRecognition();
+        sr.lang = "hi-IN";
+        sr.continuous = true;
+        sr.interimResults = true;
+        sr.maxAlternatives = 3;
+        speechRecognitionRef.current = sr;
+      } catch (e) {}
+    }
+  }, []);
+
   const start = useCallback(async () => {
     setError(null);
     cleanupUrl();
@@ -60,6 +76,46 @@ export function useRecorder(): RecorderState {
       if (!navigator.mediaDevices?.getUserMedia) {
         throw new Error("unsupported");
       }
+
+      // 1. Start SpeechRecognition FIRST so it warms up before audio stream capture
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        try {
+          if (speechRecognitionRef.current) {
+            try { speechRecognitionRef.current.stop(); } catch (e) {}
+          }
+          const sr = new SpeechRecognition();
+          sr.lang = "hi-IN";
+          sr.continuous = true;
+          sr.interimResults = true;
+          sr.maxAlternatives = 3;
+
+          sr.onresult = (event: any) => {
+            let currentText = "";
+            for (let i = 0; i < event.results.length; i++) {
+              const res = event.results[i];
+              if (res && res[0]) {
+                currentText += res[0].transcript + " ";
+              }
+            }
+            const cleanText = currentText.trim();
+            if (cleanText) {
+              setSpokenTranscript(cleanText);
+            }
+          };
+
+          sr.onerror = (e: any) => {
+            console.warn("Speech recognition notice:", e.error);
+          };
+
+          sr.start();
+          speechRecognitionRef.current = sr;
+        } catch (e) {
+          console.warn("SpeechRecognition init warning:", e);
+        }
+      }
+
+      // 2. Obtain audio stream and start MediaRecorder
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       chunksRef.current = [];
@@ -80,25 +136,6 @@ export function useRecorder(): RecorderState {
         setError("Recording error. Your browser stopped the microphone.");
         setStatus("idle");
       };
-
-      // Optional Browser WebSpeech STT transcription
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (SpeechRecognition) {
-        try {
-          const sr = new SpeechRecognition();
-          sr.lang = "hi-IN";
-          sr.continuous = false;
-          sr.interimResults = false;
-          sr.onresult = (event: any) => {
-            const transcript = event.results[0]?.[0]?.transcript;
-            if (transcript) {
-              setSpokenTranscript(transcript);
-            }
-          };
-          sr.start();
-          speechRecognitionRef.current = sr;
-        } catch (e) {}
-      }
 
       recorderRef.current = recorder;
       startedAtRef.current = Date.now();
