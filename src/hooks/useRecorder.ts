@@ -8,13 +8,38 @@ export interface RecorderState {
   spokenTranscript: string | null;
   durationMs: number;
   isSupported: boolean;
+  isListeningSTT: boolean;
   start: () => Promise<void>;
   stop: () => void;
   reset: () => void;
+  startLiveSTT: () => Promise<void>;
+  stopLiveSTT: () => void;
 }
 
 /**
- * Real microphone recording via MediaRecorder API + Live WebSpeech STT transcription.
+ * Detects the best audio MIME type supported by the browser/OS (especially Mobile Safari vs Chrome)
+ */
+function getSupportedAudioMimeType(): string {
+  if (typeof MediaRecorder === "undefined" || typeof MediaRecorder.isTypeSupported !== "function") {
+    return "";
+  }
+  const types = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/mp4",
+    "audio/aac",
+    "audio/ogg",
+  ];
+  for (const t of types) {
+    if (MediaRecorder.isTypeSupported(t)) {
+      return t;
+    }
+  }
+  return "";
+}
+
+/**
+ * Real microphone recording via MediaRecorder API + Mobile-Safe Speech Recognition.
  */
 export function useRecorder(): RecorderState {
   const [status, setStatus] = useState<RecorderState["status"]>("idle");
@@ -24,9 +49,11 @@ export function useRecorder(): RecorderState {
   const [spokenTranscript, setSpokenTranscript] = useState<string | null>(null);
   const [durationMs, setDurationMs] = useState(0);
   const [isSupported, setIsSupported] = useState(true);
+  const [isListeningSTT, setIsListeningSTT] = useState(false);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const speechRecognitionRef = useRef<any>(null);
+  const liveSTTRef = useRef<any>(null);
   const chunksRef = useRef<BlobPart[]>([]);
   const startedAtRef = useRef(0);
   const streamRef = useRef<MediaStream | null>(null);
@@ -40,6 +67,9 @@ export function useRecorder(): RecorderState {
       if (speechRecognitionRef.current) {
         try { speechRecognitionRef.current.stop(); } catch (e) {}
       }
+      if (liveSTTRef.current) {
+        try { liveSTTRef.current.stop(); } catch (e) {}
+      }
     };
   }, []);
 
@@ -50,34 +80,104 @@ export function useRecorder(): RecorderState {
     });
   }, []);
 
-  // Pre-warm SpeechRecognition instance on mount for immediate first-attempt capture
-  useEffect(() => {
+  /**
+   * Standalone Live Speech-to-Text (STT) without MediaRecorder mic hardware lock.
+   * Runs natively on Mobile Chrome and iOS Safari without any audio device conflicts.
+   */
+  const startLiveSTT = useCallback(async () => {
+    setError(null);
     if (typeof window === "undefined") return;
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (SpeechRecognition && !speechRecognitionRef.current) {
-      try {
-        const sr = new SpeechRecognition();
-        sr.lang = "hi-IN";
-        sr.continuous = true;
-        sr.interimResults = true;
-        sr.maxAlternatives = 3;
-        speechRecognitionRef.current = sr;
-      } catch (e) {}
+    if (!SpeechRecognition) {
+      setError("Speech recognition is not supported in this browser. Try Chrome or Safari.");
+      return;
+    }
+
+    try {
+      if (liveSTTRef.current) {
+        try { liveSTTRef.current.stop(); } catch (e) {}
+      }
+
+      const sr = new SpeechRecognition();
+      sr.lang = "hi-IN";
+      sr.continuous = false; // Mobile-safe single utterance
+      sr.interimResults = true;
+      sr.maxAlternatives = 3;
+
+      sr.onstart = () => {
+        setIsListeningSTT(true);
+      };
+
+      sr.onresult = (event: any) => {
+        let currentText = "";
+        for (let i = 0; i < event.results.length; i++) {
+          const res = event.results[i];
+          if (res && res[0]) {
+            currentText += res[0].transcript + " ";
+          }
+        }
+        const cleanText = currentText.trim();
+        if (cleanText) {
+          setSpokenTranscript(cleanText);
+        }
+      };
+
+      sr.onerror = (e: any) => {
+        console.warn("Live STT notice:", e.error);
+        if (e.error === "language-not-supported") {
+          // Fallback to English (India) phonetics if Hindi voice pack is missing on device
+          try {
+            const fallbackSr = new SpeechRecognition();
+            fallbackSr.lang = "en-IN";
+            fallbackSr.interimResults = true;
+            fallbackSr.onresult = sr.onresult;
+            fallbackSr.onend = () => setIsListeningSTT(false);
+            fallbackSr.start();
+            liveSTTRef.current = fallbackSr;
+            return;
+          } catch {}
+        }
+        setIsListeningSTT(false);
+      };
+
+      sr.onend = () => {
+        setIsListeningSTT(false);
+      };
+
+      sr.start();
+      liveSTTRef.current = sr;
+    } catch (e) {
+      console.warn("Failed to start Live STT:", e);
+      setIsListeningSTT(false);
     }
   }, []);
 
+  const stopLiveSTT = useCallback(() => {
+    if (liveSTTRef.current) {
+      try { liveSTTRef.current.stop(); } catch (e) {}
+    }
+    setIsListeningSTT(false);
+  }, []);
+
+  /**
+   * Audio Recording with cross-platform mobile compatibility (iOS Safari + Android Chrome)
+   */
   const start = useCallback(async () => {
     setError(null);
     cleanupUrl();
     setAudioBlob(null);
     setSpokenTranscript(null);
     setDurationMs(0);
+
     try {
       if (!navigator.mediaDevices?.getUserMedia) {
         throw new Error("unsupported");
       }
 
-      // 1. Start SpeechRecognition FIRST so it warms up before audio stream capture
+      const isMobile = typeof navigator !== "undefined" && 
+        /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+      // 1. Attempt non-blocking SpeechRecognition for live transcription
       const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       if (SpeechRecognition) {
         try {
@@ -86,7 +186,8 @@ export function useRecorder(): RecorderState {
           }
           const sr = new SpeechRecognition();
           sr.lang = "hi-IN";
-          sr.continuous = true;
+          // Important: Mobile browsers abort on continuous=true; desktop supports continuous
+          sr.continuous = !isMobile;
           sr.interimResults = true;
           sr.maxAlternatives = 3;
 
@@ -105,7 +206,8 @@ export function useRecorder(): RecorderState {
           };
 
           sr.onerror = (e: any) => {
-            console.warn("Speech recognition notice:", e.error);
+            // Mobile devices may yield 'audio-capture' or 'aborted' when getUserMedia locks the mic
+            console.warn("Speech recognition notice (non-fatal):", e.error);
           };
 
           sr.start();
@@ -115,23 +217,48 @@ export function useRecorder(): RecorderState {
         }
       }
 
-      // 2. Obtain audio stream and start MediaRecorder
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // 2. Request microphone stream with mobile-optimized constraints
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+
       streamRef.current = stream;
       chunksRef.current = [];
-      const recorder = new MediaRecorder(stream);
+
+      const preferredMime = getSupportedAudioMimeType();
+      const options: MediaRecorderOptions = preferredMime ? { mimeType: preferredMime } : {};
+
+      let recorder: MediaRecorder;
+      try {
+        recorder = new MediaRecorder(stream, options);
+      } catch (mimeErr) {
+        // Fallback for Safari/iOS if specific mime is rejected
+        recorder = new MediaRecorder(stream);
+      }
+
       recorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
+        if (e.data && e.data.size > 0) {
+          chunksRef.current.push(e.data);
+        }
       };
+
       recorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
+        const finalType = recorder.mimeType || preferredMime || "audio/webm";
+        const blob = new Blob(chunksRef.current, { type: finalType });
         setAudioBlob(blob);
         setAudioUrl(URL.createObjectURL(blob));
         setDurationMs(Date.now() - startedAtRef.current);
         setStatus("recorded");
+
+        // Clean up hardware microphone stream
         stream.getTracks().forEach((t) => t.stop());
         streamRef.current = null;
       };
+
       recorder.onerror = () => {
         setError("Recording error. Your browser stopped the microphone.");
         setStatus("idle");
@@ -139,20 +266,22 @@ export function useRecorder(): RecorderState {
 
       recorderRef.current = recorder;
       startedAtRef.current = Date.now();
-      recorder.start();
+      
+      // Request timeslices so dataavailable fires reliably across mobile browsers
+      recorder.start(250);
       setStatus("recording");
     } catch (err) {
       const e = err as DOMException | Error;
       const name = (e as DOMException).name;
       if (name === "NotAllowedError" || name === "SecurityError") {
-        setError("Microphone permission denied. Allow mic access in your browser, then try again.");
+        setError("Microphone permission denied. Allow mic access in your mobile browser settings and reload.");
       } else if (name === "NotFoundError") {
         setError("No microphone found on this device. Connect a mic and retry.");
       } else if ((e as Error).message === "unsupported") {
         setIsSupported(false);
-        setError("This browser does not support microphone recording. Try Chrome, Edge or Safari.");
+        setError("This browser does not support microphone recording. Try Chrome or Safari.");
       } else {
-        setError("Could not start recording. Please check your microphone and retry.");
+        setError("Could not start recording. Please check your microphone permissions.");
       }
       setStatus("idle");
     }
@@ -161,7 +290,9 @@ export function useRecorder(): RecorderState {
   const stop = useCallback(() => {
     const rec = recorderRef.current;
     if (rec && rec.state !== "inactive") {
-      rec.stop();
+      try {
+        rec.stop();
+      } catch {}
     } else {
       setStatus("idle");
     }
@@ -177,9 +308,24 @@ export function useRecorder(): RecorderState {
     setDurationMs(0);
     setStatus("idle");
     setError(null);
+    setIsListeningSTT(false);
   }, [cleanupUrl]);
 
-  return { status, error, audioUrl, audioBlob, spokenTranscript, durationMs, isSupported, start, stop, reset };
+  return {
+    status,
+    error,
+    audioUrl,
+    audioBlob,
+    spokenTranscript,
+    durationMs,
+    isSupported,
+    isListeningSTT,
+    start,
+    stop,
+    reset,
+    startLiveSTT,
+    stopLiveSTT,
+  };
 }
 
 /** Uses the browser SpeechSynthesis API to speak a Hindi word. Returns false if unavailable. */

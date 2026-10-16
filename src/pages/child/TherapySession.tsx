@@ -11,11 +11,13 @@ import {
   Send,
   Square,
   Star,
+  Sparkles,
 } from "lucide-react";
 import { Badge, Button, Card, DemoBadge, PageHeader } from "../../components/ui";
 import { useApp } from "../../store/AppContext";
 import { MATERIALS } from "../../data/demoData";
 import { analyzeSpeech } from "../../services/speechAnalysisService";
+import { analyzeAudioBlobAcoustics } from "../../services/acousticAnalyzer";
 import { speakHindi, useRecorder } from "../../hooks/useRecorder";
 import { cn } from "../../utils/cn";
 
@@ -37,12 +39,35 @@ export default function TherapySession() {
   const [playedBack, setPlayedBack] = useState(false);
   const [spokenUnsupported, setSpokenUnsupported] = useState(false);
   const [customTranscript, setCustomTranscript] = useState<string>("");
+  const [isAcousticAnalyzing, setIsAcousticAnalyzing] = useState(false);
 
   useEffect(() => {
     if (recorder.spokenTranscript) {
       setCustomTranscript(recorder.spokenTranscript);
     }
   }, [recorder.spokenTranscript]);
+
+  // When recording finishes on mobile/desktop: if STT wasn't captured, run in-browser acoustic diagnosis
+  useEffect(() => {
+    if (recorder.status === "recorded" && recorder.audioBlob && !customTranscript) {
+      setIsAcousticAnalyzing(true);
+      analyzeAudioBlobAcoustics({
+        audioBlob: recorder.audioBlob,
+        targetPhoneme: material.targetSound,
+        word: material.word,
+        position: material.position,
+      })
+        .then((diag) => {
+          if (diag && diag.spokenText && !diag.metrics.isSilenceOrNoise) {
+            setCustomTranscript(diag.spokenText);
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          setIsAcousticAnalyzing(false);
+        });
+    }
+  }, [recorder.status, recorder.audioBlob, material, customTranscript]);
 
   useEffect(() => {
     setWordId(initialWordId);
@@ -128,16 +153,18 @@ export default function TherapySession() {
             </div>
           </div>
 
-          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {/* ACTION BUTTONS */}
+          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-5">
             <Button variant="secondary" onClick={handleListen}>
               <Ear size={16} /> Listen
               {listened && <span className="ml-1 text-[10px] text-emerald-600">✓</span>}
             </Button>
+            
             {recorder.status !== "recording" ? (
               <Button
                 onClick={recorder.start}
-                disabled={!recorder.isSupported || phase === "analyzing"}
-                title={!recorder.isSupported ? "Microphone recording unsupported in this browser" : "Start recording"}
+                disabled={!recorder.isSupported || phase === "analyzing" || recorder.isListeningSTT}
+                title={!recorder.isSupported ? "Microphone recording unsupported in this browser" : "Start voice recording"}
               >
                 <Mic size={16} /> {recorder.status === "recorded" ? "Re-record" : "Record"}
               </Button>
@@ -146,6 +173,27 @@ export default function TherapySession() {
                 <Square size={16} /> Stop
               </Button>
             )}
+
+            {/* Live STT Voice Detect button (Non-blocking mobile speech-to-text) */}
+            {!recorder.isListeningSTT ? (
+              <Button
+                variant="secondary"
+                onClick={recorder.startLiveSTT}
+                disabled={recorder.status === "recording" || phase === "analyzing"}
+                title="Direct speech-to-text live mic without saving audio file"
+                className="text-purple-700 hover:text-purple-900 border-purple-200"
+              >
+                <Sparkles size={16} className="text-purple-600" /> Live STT
+              </Button>
+            ) : (
+              <Button
+                variant="danger"
+                onClick={recorder.stopLiveSTT}
+              >
+                <Square size={16} /> Stop STT
+              </Button>
+            )}
+
             <Button
               variant="secondary"
               onClick={() => {
@@ -155,8 +203,9 @@ export default function TherapySession() {
               }}
               disabled={!recorder.audioUrl}
             >
-              <Play size={16} /> Play Recording
+              <Play size={16} /> Play
             </Button>
+            
             <Button
               variant="ghost"
               onClick={() => {
@@ -164,14 +213,16 @@ export default function TherapySession() {
                 setPhase("idle");
                 setAnalysisError(null);
                 setPlayedBack(false);
+                setCustomTranscript("");
               }}
             >
-              <RotateCcw size={16} /> Try Again
+              <RotateCcw size={16} /> Reset
             </Button>
           </div>
 
+          {/* ACTIVE RECORDING BANNER */}
           {recorder.status === "recording" && (
-            <div className="mt-4 flex flex-col items-center justify-center gap-2 rounded-xl bg-rose-50/80 px-4 py-3 ring-1 ring-rose-200 ring-inset">
+            <div className="mt-4 flex flex-col items-center justify-center gap-2 rounded-xl bg-rose-50/90 px-4 py-3 ring-1 ring-rose-200 ring-inset">
               <div className="flex items-center gap-1.5">
                 <span className="animate-bounce size-1.5 rounded-full bg-rose-600" style={{ animationDelay: "0ms" }} />
                 <span className="animate-bounce size-2.5 rounded-full bg-rose-600" style={{ animationDelay: "150ms" }} />
@@ -180,6 +231,17 @@ export default function TherapySession() {
                 <span className="animate-bounce size-1.5 rounded-full bg-rose-600" style={{ animationDelay: "0ms" }} />
               </div>
               <p className="text-sm font-bold text-rose-700">Listening to microphone… speak “{material.word}” now!</p>
+            </div>
+          )}
+
+          {/* LIVE STT BANNER */}
+          {recorder.isListeningSTT && (
+            <div className="mt-4 flex flex-col items-center justify-center gap-2 rounded-xl bg-purple-50 px-4 py-3 ring-1 ring-purple-200 ring-inset">
+              <div className="flex items-center gap-1.5">
+                <span className="animate-ping size-2 rounded-full bg-purple-600" />
+                <span className="text-xs font-bold text-purple-700 uppercase tracking-wide">Live Hindi STT Active</span>
+              </div>
+              <p className="text-sm font-bold text-purple-900">Speak “{material.word}” clearly into your mobile mic…</p>
             </div>
           )}
 
@@ -194,32 +256,44 @@ export default function TherapySession() {
             </div>
           )}
 
-          {recorder.audioUrl && (
+          {/* AUDIO PLAYER & SPOKEN DETECTION SECTION */}
+          {(recorder.audioUrl || customTranscript || recorder.status === "recorded") && (
             <div className="mt-4 rounded-xl bg-slate-50 p-3.5 ring-1 ring-slate-200 ring-inset space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-xs font-bold text-slate-600 uppercase">
-                  Your recording {(recorder.durationMs / 1000).toFixed(1)}s
-                </p>
-                {playedBack && <Badge tone="green">Played back — does it sound correct?</Badge>}
-              </div>
-              <audio id="playback" controls src={recorder.audioUrl} className="w-full" />
+              {recorder.audioUrl && (
+                <>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-xs font-bold text-slate-600 uppercase">
+                      Audio Recording {(recorder.durationMs / 1000).toFixed(1)}s
+                    </p>
+                    {playedBack && <Badge tone="green">Played back ✓</Badge>}
+                  </div>
+                  <audio id="playback" controls src={recorder.audioUrl} className="w-full" />
+                </>
+              )}
 
+              {/* SPOKEN SPEECH DETECTED CARD */}
               <div className="rounded-xl bg-white p-3 ring-1 ring-purple-200 ring-inset">
                 <div className="flex items-center justify-between mb-1">
                   <label htmlFor="transcript-input" className="text-xs font-bold text-purple-700 flex items-center gap-1.5">
-                    <span>🎙️ Spoken Speech Detected:</span>
+                    <span>🎙️ Spoken Speech Detected (क्या बोला):</span>
+                    {isAcousticAnalyzing && (
+                      <span className="flex items-center gap-1 text-[11px] font-normal text-purple-500">
+                        <Loader2 size={12} className="animate-spin" /> Analyzing waveform...
+                      </span>
+                    )}
                   </label>
-                  <span className="text-[10px] text-slate-400 font-medium">Auto-captured from mic (editable)</span>
+                  <span className="text-[10px] text-slate-400 font-medium">Auto-detected (editable)</span>
                 </div>
                 <input
                   id="transcript-input"
                   type="text"
                   value={customTranscript}
                   onChange={(e) => setCustomTranscript(e.target.value)}
-                  placeholder={`Word spoken (e.g. "${material.word}" or mispronounced sound like "सजा")`}
-                  className="w-full rounded-lg border border-slate-200 bg-slate-50/50 px-3 py-2 text-sm font-bold text-purple-900 placeholder-slate-400 focus:border-purple-500 focus:bg-white focus:outline-none"
+                  placeholder={`Spoken word e.g. "${material.word}" or mispronounced sound e.g. "${material.targetSound === "र" ? "लथ" : "शूराज"}"`}
+                  className="w-full rounded-lg border border-slate-200 bg-slate-50/50 px-3 py-2 text-base font-bold text-purple-900 placeholder-slate-400 focus:border-purple-500 focus:bg-white focus:outline-none"
                 />
                 
+                {/* QUICK TEST BUTTONS */}
                 <div className="mt-2.5 flex flex-wrap items-center gap-2 border-t border-purple-100 pt-2">
                   <span className="text-[11px] font-semibold text-slate-500">Quick Test Input:</span>
                   <button
@@ -232,8 +306,15 @@ export default function TherapySession() {
                   <button
                     type="button"
                     onClick={() => {
-                      const alt = material.targetSound === "र" ? "सजा" : (material.targetSound === "स" ? "शूराज" : "तमा");
-                      setCustomTranscript(alt);
+                      const altMap: Record<string, string> = {
+                        "र": "लथ",
+                        "स": "शूराज",
+                        "श": "सूरज",
+                        "क": "तेला",
+                        "ल": "याल",
+                        "त": "टोपी",
+                      };
+                      setCustomTranscript(altMap[material.targetSound] || "लथ");
                     }}
                     className="rounded-lg bg-rose-50 px-2.5 py-1 text-xs font-bold text-rose-700 ring-1 ring-rose-200 hover:bg-rose-100 transition-colors"
                   >
@@ -254,7 +335,7 @@ export default function TherapySession() {
             <Button
               size="lg"
               className="flex-1"
-              disabled={recorder.status !== "recorded" || phase === "analyzing"}
+              disabled={(recorder.status !== "recorded" && !customTranscript.trim()) || phase === "analyzing"}
               onClick={handleAnalyze}
             >
               <Send size={18} /> Submit for Analysis
@@ -263,9 +344,9 @@ export default function TherapySession() {
               More materials
             </Button>
           </div>
-          {recorder.status !== "recorded" && (
+          {recorder.status !== "recorded" && !customTranscript.trim() && (
             <p className="mt-2 text-xs text-slate-400">
-              Record at least one sample first — the Submit button enables once audio is captured.
+              Record audio or tap "Live STT" to speak the word — Submit enables once audio or speech is captured.
             </p>
           )}
         </Card>
@@ -279,10 +360,10 @@ export default function TherapySession() {
               </span>
               <p className="font-display text-lg font-bold text-slate-900">Analysis panel is waiting</p>
               <p className="max-w-sm text-sm text-slate-500">
-                Listen → Record → Play back → Submit. The analysis engine returns expected vs observed phoneme pairs.
+                Listen → Record / Speak → Submit. The AI engine extracts speech formants & phoneme pairs to diagnose articulation.
               </p>
               <div className="mt-2 flex flex-wrap justify-center gap-1.5">
-                {["र → ल", "स → श", "क → क"].map((p) => (
+                {["र → ल", "स → श", "क → त"].map((p) => (
                   <Badge key={p} tone="slate">
                     {p}
                   </Badge>
@@ -294,12 +375,12 @@ export default function TherapySession() {
           {phase === "analyzing" && (
             <Card className="flex h-full flex-col items-center justify-center gap-3 py-12 text-center">
               <Loader2 className="animate-spin text-brand-600" size={38} />
-              <p className="font-display text-lg font-bold text-slate-900">Analyzing speech…</p>
-              <p className="text-sm text-slate-500">Extracting phoneme sequence and comparing with the target sound.</p>
+              <p className="font-display text-lg font-bold text-slate-900">Analyzing speech waveform…</p>
+              <p className="text-sm text-slate-500">Extracting phoneme sequence, spectral harmonics & comparing with target sound.</p>
               <div className="mt-2 h-2 w-56 overflow-hidden rounded-full bg-slate-200">
                 <div className="animate-bar h-full w-3/4 rounded-full bg-brand-500" />
               </div>
-              <DemoBadge label="Real-Time AI Inference" />
+              <DemoBadge label="Real-Time AI Acoustic Inference" />
             </Card>
           )}
 
@@ -421,6 +502,7 @@ export default function TherapySession() {
                     variant="secondary"
                     onClick={() => {
                       recorder.reset();
+                      setCustomTranscript("");
                       setPhase("idle");
                     }}
                   >

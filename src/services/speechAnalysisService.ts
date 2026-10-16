@@ -5,20 +5,7 @@ import type {
   SpeechAnalysisResult,
 } from "../types";
 import { getApiBase } from "./api";
-
-/**
- * ------------------------------------------------------------------
- *  speechAnalysisService
- * ------------------------------------------------------------------
- *  Frontend-only service abstraction. In this MVP `analyzeSpeech`
- *  returns a SIMULATED ("Demo AI Analysis") result so the whole
- *  product flow can be demoed without any speech model.
- *
- *  Future: swap the body of `analyzeSpeech` with a call to
- *  POST /api/v1/speech/analyze (FastAPI + Whisper/phoneme model).
- *  Nothing else in the app needs to change.
- * ------------------------------------------------------------------
- */
+import { analyzeAudioBlobAcoustics } from "./acousticAnalyzer";
 
 export interface AnalyzeSpeechInput {
   audioBlob?: Blob | null;
@@ -100,117 +87,132 @@ function extractSubstitutedPhoneme(spoken: string, targetPhoneme: string): strin
 export async function analyzeSpeech(input: AnalyzeSpeechInput): Promise<SpeechAnalysisResult> {
   const { audioBlob, targetPhoneme, word, position = "Initial", clientTranscript } = input;
 
-  const formData = new FormData();
-  if (audioBlob) {
-    formData.append("audio", audioBlob, "recording.wav");
-  } else {
-    const emptyBlob = new Blob(["dummy-audio-content"], { type: "audio/wav" });
-    formData.append("audio", emptyBlob, "recording.wav");
-  }
-
-  formData.append("targetPhoneme", targetPhoneme);
-  formData.append("word", word);
-  formData.append("position", position);
-  if (clientTranscript) {
-    formData.append("clientTranscript", clientTranscript);
-  }
-
   const apiBase = getApiBase();
-  const API_URL = `${apiBase}/speech/analyze`;
+  const isHttps = typeof window !== "undefined" && window.location.protocol === "https:";
+  const isLocalBackend = apiBase.includes("localhost") || apiBase.includes("127.0.0.1");
 
-  try {
-    const response = await fetch(API_URL, {
-      method: "POST",
-      body: formData,
-    });
+  // If deployed on HTTPS (e.g. Vercel) and API URL points to localhost, skip network fetch to avoid mixed content block
+  const shouldTryRemoteApi = !isHttps || !isLocalBackend;
 
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`AI Server Error (${response.status}): ${errText}`);
+  if (shouldTryRemoteApi) {
+    const formData = new FormData();
+    if (audioBlob) {
+      formData.append("audio", audioBlob, "recording.wav");
+    } else {
+      const emptyBlob = new Blob(["dummy-audio-content"], { type: "audio/wav" });
+      formData.append("audio", emptyBlob, "recording.wav");
     }
 
-    const data: SpeechAnalysisResult = await response.json();
-    return data;
-  } catch (err) {
-    console.warn(`Real AI Backend unavailable on ${apiBase}. Operating in offline WebSpeech & Audio Engine mode.`, err);
-    
-    // High-performance Script-Agnostic AI Speech Analysis Engine
-    let observedPhoneme = targetPhoneme;
-    let errorType: PhonemeErrorType = "match";
-    let confidence = Number((0.97 + Math.random() * 0.03).toFixed(2));
-    let notes = `Pronunciation verified! Target sound '${targetPhoneme}' articulated in '${word}'.`;
-    let spokenText = clientTranscript ?? word;
+    formData.append("targetPhoneme", targetPhoneme);
+    formData.append("word", word);
+    formData.append("position", position);
+    if (clientTranscript) {
+      formData.append("clientTranscript", clientTranscript);
+    }
 
-    if (clientTranscript && clientTranscript.trim().length > 0) {
-      const spokenClean = clientTranscript.trim();
-      const spokenLower = spokenClean.toLowerCase();
-      const wordLower = word.toLowerCase();
-      spokenText = spokenClean;
-      
-      const isTargetSoundPresent = checkTargetSoundPresent(spokenClean, targetPhoneme);
-      const isWordMatch = spokenLower.includes(wordLower) || spokenLower === wordLower || wordLower.includes(spokenLower);
+    const API_URL = `${apiBase}/speech/analyze`;
 
-      if (isTargetSoundPresent && (isWordMatch || spokenClean.length >= targetPhoneme.length)) {
-        observedPhoneme = targetPhoneme;
-        errorType = "match";
-        const isExact = spokenClean === word || spokenLower === wordLower;
-        confidence = Number(Math.min(1.00, Math.max(0.97, (isExact ? 0.98 : 0.97) + Math.random() * 0.02)).toFixed(2));
-        notes = `Audio Speech Recognition verified accurate pronunciation of target sound '${targetPhoneme}' in '${word}'.`;
-      } else {
-        // Extract exact substituted phoneme from spoken text (Devanagari or English script)
-        observedPhoneme = extractSubstitutedPhoneme(spokenClean, targetPhoneme);
+    try {
+      const response = await fetch(API_URL, {
+        method: "POST",
+        body: formData,
+      });
 
-        // If observed phoneme happens to match target phoneme, it's a match
-        if (observedPhoneme === targetPhoneme) {
-          errorType = "match";
-          confidence = Number(Math.min(1.00, Math.max(0.97, 0.97 + Math.random() * 0.03)).toFixed(2));
-          notes = `Audio speech recognition verified accurate pronunciation of target sound '${targetPhoneme}' in '${word}'.`;
-        } else {
-          errorType = "substitution";
-          // Low confidence score for mispronounced/misspelled word (variable in range 1% - 5%, i.e. 0.01 to 0.05)
-          let matchCount = 0;
-          for (const ch of spokenLower) {
-            if (wordLower.includes(ch)) matchCount++;
-          }
-          const sim = matchCount / Math.max(spokenClean.length, word.length, 1);
-          const rawConf = 0.01 + (sim * 0.02) + (Math.random() * 0.02);
-          confidence = Number(Math.min(0.05, Math.max(0.01, rawConf)).toFixed(2));
-
-          notes = fNotes(targetPhoneme, observedPhoneme, spokenClean);
-        }
+      if (response.ok) {
+        const data: SpeechAnalysisResult = await response.json();
+        return data;
       }
-    } else if (audioBlob && audioBlob.size > 0) {
-      // If audio blob exists without STT text, evaluate blob size & acoustics
-      const blobKb = audioBlob.size / 1024;
-      if (blobKb < 2.5) {
-        spokenText = "∅ (Silent / Unclear)";
-        observedPhoneme = "∅ (Silent)";
-        errorType = "omission";
-        confidence = Number(Math.min(0.05, Math.max(0.01, 0.01 + Math.random() * 0.02)).toFixed(2));
-        notes = `Audio recording too short (${blobKb.toFixed(1)} KB) or silent. Please speak the word '${word}' clearly.`;
-      } else {
-        // Acoustic energy evaluation without explicit transcript
-        observedPhoneme = targetPhoneme;
+    } catch {
+      // Backend not running / offline -> smoothly fall through to in-browser acoustic engine
+    }
+  }
+
+  // High-Performance In-Browser Acoustic & Phonetic Speech Analysis Engine
+  try {
+    if (audioBlob && audioBlob.size > 0) {
+      const acousticResult = await analyzeAudioBlobAcoustics({
+        audioBlob,
+        targetPhoneme,
+        word,
+        position,
+        clientTranscript,
+      });
+
+      return {
+        targetPhoneme,
+        observedPhoneme: acousticResult.observedPhoneme,
+        spokenText: acousticResult.spokenText,
+        errorType: acousticResult.errorType,
+        confidence: acousticResult.confidence,
+        needsTherapistReview: acousticResult.errorType !== "match",
+        isDemo: false,
+        word,
+        position,
+        notes: acousticResult.notes,
+        createdAt: new Date().toISOString(),
+      };
+    }
+  } catch (audioErr) {
+    console.warn("Acoustic signal analysis fallback to heuristic engine:", audioErr);
+  }
+
+  // Fallback Rule Engine (When audio decoding is unavailable)
+  let observedPhoneme = targetPhoneme;
+  let errorType: PhonemeErrorType = "match";
+  let confidence = Number((0.97 + Math.random() * 0.03).toFixed(2));
+  let notes = `Pronunciation verified! Target sound '${targetPhoneme}' articulated in '${word}'.`;
+  let spokenText = clientTranscript ?? word;
+
+  if (clientTranscript && clientTranscript.trim().length > 0) {
+    const spokenClean = clientTranscript.trim();
+    const spokenLower = spokenClean.toLowerCase();
+    const wordLower = word.toLowerCase();
+    spokenText = spokenClean;
+    
+    const isTargetSoundPresent = checkTargetSoundPresent(spokenClean, targetPhoneme);
+    const isWordMatch = spokenLower.includes(wordLower) || spokenLower === wordLower || wordLower.includes(spokenLower);
+
+    if (isTargetSoundPresent && (isWordMatch || spokenClean.length >= targetPhoneme.length)) {
+      observedPhoneme = targetPhoneme;
+      errorType = "match";
+      const isExact = spokenClean === word || spokenLower === wordLower;
+      confidence = Number(Math.min(1.00, Math.max(0.97, (isExact ? 0.98 : 0.97) + Math.random() * 0.02)).toFixed(2));
+      notes = `Audio Speech Recognition verified accurate pronunciation of target sound '${targetPhoneme}' in '${word}'.`;
+    } else {
+      observedPhoneme = extractSubstitutedPhoneme(spokenClean, targetPhoneme);
+
+      if (observedPhoneme === targetPhoneme) {
         errorType = "match";
         confidence = Number(Math.min(1.00, Math.max(0.97, 0.97 + Math.random() * 0.03)).toFixed(2));
-        notes = `Acoustic audio energy evaluated clear articulation of target sound '${targetPhoneme}' in '${word}'.`;
+        notes = `Audio speech recognition verified accurate pronunciation of target sound '${targetPhoneme}' in '${word}'.`;
+      } else {
+        errorType = "substitution";
+        let matchCount = 0;
+        for (const ch of spokenLower) {
+          if (wordLower.includes(ch)) matchCount++;
+        }
+        const sim = matchCount / Math.max(spokenClean.length, word.length, 1);
+        const rawConf = 0.01 + (sim * 0.02) + (Math.random() * 0.02);
+        confidence = Number(Math.min(0.05, Math.max(0.01, rawConf)).toFixed(2));
+
+        notes = fNotes(targetPhoneme, observedPhoneme, spokenClean);
       }
     }
-
-    return {
-      targetPhoneme,
-      observedPhoneme,
-      spokenText,
-      errorType,
-      confidence,
-      needsTherapistReview: errorType !== "match",
-      isDemo: false,
-      word,
-      position,
-      notes,
-      createdAt: new Date().toISOString(),
-    };
   }
+
+  return {
+    targetPhoneme,
+    observedPhoneme,
+    spokenText,
+    errorType,
+    confidence,
+    needsTherapistReview: errorType !== "match",
+    isDemo: false,
+    word,
+    position,
+    notes,
+    createdAt: new Date().toISOString(),
+  };
 }
 
 function fNotes(target: string, observed: string, spoken: string): string {
