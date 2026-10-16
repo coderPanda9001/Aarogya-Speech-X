@@ -17,7 +17,7 @@ import { Badge, Button, Card, DemoBadge, PageHeader } from "../../components/ui"
 import { useApp } from "../../store/AppContext";
 import { MATERIALS } from "../../data/demoData";
 import { analyzeSpeech } from "../../services/speechAnalysisService";
-import { analyzeAudioBlobAcoustics } from "../../services/acousticAnalyzer";
+import { diagnoseArticulation } from "../../services/acousticAnalyzer";
 import { speakHindi, useRecorder } from "../../hooks/useRecorder";
 import { cn } from "../../utils/cn";
 
@@ -39,7 +39,6 @@ export default function TherapySession() {
   const [playedBack, setPlayedBack] = useState(false);
   const [spokenUnsupported, setSpokenUnsupported] = useState(false);
   const [customTranscript, setCustomTranscript] = useState<string>("");
-  const [isAcousticAnalyzing, setIsAcousticAnalyzing] = useState(false);
 
   useEffect(() => {
     if (recorder.spokenTranscript) {
@@ -47,27 +46,24 @@ export default function TherapySession() {
     }
   }, [recorder.spokenTranscript]);
 
-  // When recording finishes on mobile/desktop: if STT wasn't captured, run in-browser acoustic diagnosis
+  // When simple recording stops: automatically diagnose acoustic waveform from live stream metrics
   useEffect(() => {
-    if (recorder.status === "recorded" && recorder.audioBlob && !customTranscript) {
-      setIsAcousticAnalyzing(true);
-      analyzeAudioBlobAcoustics({
-        audioBlob: recorder.audioBlob,
-        targetPhoneme: material.targetSound,
-        word: material.word,
-        position: material.position,
-      })
-        .then((diag) => {
-          if (diag && diag.spokenText && !diag.metrics.isSilenceOrNoise) {
-            setCustomTranscript(diag.spokenText);
-          }
-        })
-        .catch(() => {})
-        .finally(() => {
-          setIsAcousticAnalyzing(false);
-        });
+    if (recorder.status === "recorded") {
+      if (recorder.spokenTranscript) {
+        setCustomTranscript(recorder.spokenTranscript);
+      } else if (recorder.liveAcousticMetrics) {
+        const diag = diagnoseArticulation(
+          material.targetSound,
+          material.word,
+          recorder.liveAcousticMetrics,
+          customTranscript.trim() || null
+        );
+        if (diag && diag.spokenText && !customTranscript) {
+          setCustomTranscript(diag.spokenText);
+        }
+      }
     }
-  }, [recorder.status, recorder.audioBlob, material, customTranscript]);
+  }, [recorder.status, recorder.spokenTranscript, recorder.liveAcousticMetrics, material, customTranscript]);
 
   useEffect(() => {
     setWordId(initialWordId);
@@ -99,6 +95,7 @@ export default function TherapySession() {
         word: material.word,
         position: material.position,
         clientTranscript: customTranscript.trim() || recorder.spokenTranscript,
+        acousticMetrics: recorder.liveAcousticMetrics,
       });
       logAttempt(result);
       setPhase("result");
@@ -276,13 +273,8 @@ export default function TherapySession() {
                 <div className="flex items-center justify-between mb-1">
                   <label htmlFor="transcript-input" className="text-xs font-bold text-purple-700 flex items-center gap-1.5">
                     <span>🎙️ Spoken Speech Detected (क्या बोला):</span>
-                    {isAcousticAnalyzing && (
-                      <span className="flex items-center gap-1 text-[11px] font-normal text-purple-500">
-                        <Loader2 size={12} className="animate-spin" /> Analyzing waveform...
-                      </span>
-                    )}
                   </label>
-                  <span className="text-[10px] text-slate-400 font-medium">Auto-detected (editable)</span>
+                  <span className="text-[10px] text-slate-400 font-medium">Auto-detected from mic</span>
                 </div>
                 <input
                   id="transcript-input"

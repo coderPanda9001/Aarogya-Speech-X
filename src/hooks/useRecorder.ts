@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { AcousticMetrics } from "../services/acousticAnalyzer";
 
 export interface RecorderState {
   status: "idle" | "recording" | "recorded";
@@ -9,6 +10,7 @@ export interface RecorderState {
   durationMs: number;
   isSupported: boolean;
   isListeningSTT: boolean;
+  liveAcousticMetrics: AcousticMetrics | null;
   start: () => Promise<void>;
   stop: () => void;
   reset: () => void;
@@ -39,7 +41,7 @@ function getSupportedAudioMimeType(): string {
 }
 
 /**
- * Real microphone recording via MediaRecorder API + Mobile-Safe Speech Recognition.
+ * Real microphone recording via MediaRecorder API + Live Stream Acoustic Analyzer + Mobile-Safe Speech Recognition.
  */
 export function useRecorder(): RecorderState {
   const [status, setStatus] = useState<RecorderState["status"]>("idle");
@@ -50,6 +52,7 @@ export function useRecorder(): RecorderState {
   const [durationMs, setDurationMs] = useState(0);
   const [isSupported, setIsSupported] = useState(true);
   const [isListeningSTT, setIsListeningSTT] = useState(false);
+  const [liveAcousticMetrics, setLiveAcousticMetrics] = useState<AcousticMetrics | null>(null);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const speechRecognitionRef = useRef<any>(null);
@@ -57,6 +60,26 @@ export function useRecorder(): RecorderState {
   const chunksRef = useRef<BlobPart[]>([]);
   const startedAtRef = useRef(0);
   const streamRef = useRef<MediaStream | null>(null);
+
+  // Live in-stream Web Audio processing refs (Bypasses decodeAudioData mobile bugs)
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const samplerIntervalRef = useRef<any>(null);
+  const liveMetricsRef = useRef({
+    frameCount: 0,
+    voicedCount: 0,
+    sumRms: 0,
+    maxPeak: 0,
+    sumZcr: 0,
+    sumLow: 0,
+    sumMid: 0,
+    sumHigh: 0,
+    sumWeightedFreq: 0,
+    sumMag: 0,
+    lastEnergy: 0,
+    modulationSum: 0,
+  });
 
   useEffect(() => {
     if (typeof window === "undefined" || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
@@ -70,6 +93,10 @@ export function useRecorder(): RecorderState {
       if (liveSTTRef.current) {
         try { liveSTTRef.current.stop(); } catch (e) {}
       }
+      if (samplerIntervalRef.current) {
+        clearInterval(samplerIntervalRef.current);
+      }
+      try { audioCtxRef.current?.close(); } catch {}
     };
   }, []);
 
@@ -125,7 +152,6 @@ export function useRecorder(): RecorderState {
       sr.onerror = (e: any) => {
         console.warn("Live STT notice:", e.error);
         if (e.error === "language-not-supported") {
-          // Fallback to English (India) phonetics if Hindi voice pack is missing on device
           try {
             const fallbackSr = new SpeechRecognition();
             fallbackSr.lang = "en-IN";
@@ -160,14 +186,31 @@ export function useRecorder(): RecorderState {
   }, []);
 
   /**
-   * Audio Recording with cross-platform mobile compatibility (iOS Safari + Android Chrome)
+   * Audio Recording with in-stream real-time acoustic signal sampling (Mobile Chrome & iOS Safari compatible)
    */
   const start = useCallback(async () => {
     setError(null);
     cleanupUrl();
     setAudioBlob(null);
     setSpokenTranscript(null);
+    setLiveAcousticMetrics(null);
     setDurationMs(0);
+
+    // Reset live acoustic metrics accumulators
+    liveMetricsRef.current = {
+      frameCount: 0,
+      voicedCount: 0,
+      sumRms: 0,
+      maxPeak: 0,
+      sumZcr: 0,
+      sumLow: 0,
+      sumMid: 0,
+      sumHigh: 0,
+      sumWeightedFreq: 0,
+      sumMag: 0,
+      lastEnergy: 0,
+      modulationSum: 0,
+    };
 
     try {
       if (!navigator.mediaDevices?.getUserMedia) {
@@ -177,47 +220,55 @@ export function useRecorder(): RecorderState {
       const isMobile = typeof navigator !== "undefined" && 
         /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 
-      // 1. Attempt non-blocking SpeechRecognition for live transcription
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (SpeechRecognition) {
+      // 1. Initialize AudioContext synchronously on user gesture (avoids iOS suspended state)
+      const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
+      let audioCtx: AudioContext | null = null;
+      if (AudioCtxClass) {
         try {
-          if (speechRecognitionRef.current) {
-            try { speechRecognitionRef.current.stop(); } catch (e) {}
+          audioCtx = new AudioCtxClass();
+          if (audioCtx.state === "suspended") {
+            audioCtx.resume().catch(() => {});
           }
-          const sr = new SpeechRecognition();
-          sr.lang = "hi-IN";
-          // Important: Mobile browsers abort on continuous=true; desktop supports continuous
-          sr.continuous = !isMobile;
-          sr.interimResults = true;
-          sr.maxAlternatives = 3;
+          audioCtxRef.current = audioCtx;
+        } catch {}
+      }
 
-          sr.onresult = (event: any) => {
-            let currentText = "";
-            for (let i = 0; i < event.results.length; i++) {
-              const res = event.results[i];
-              if (res && res[0]) {
-                currentText += res[0].transcript + " ";
+      // 2. On desktop only, attempt background SpeechRecognition
+      if (!isMobile) {
+        const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+        if (SpeechRecognition) {
+          try {
+            if (speechRecognitionRef.current) {
+              try { speechRecognitionRef.current.stop(); } catch (e) {}
+            }
+            const sr = new SpeechRecognition();
+            sr.lang = "hi-IN";
+            sr.continuous = true;
+            sr.interimResults = true;
+            sr.maxAlternatives = 3;
+
+            sr.onresult = (event: any) => {
+              let currentText = "";
+              for (let i = 0; i < event.results.length; i++) {
+                const res = event.results[i];
+                if (res && res[0]) {
+                  currentText += res[0].transcript + " ";
+                }
               }
-            }
-            const cleanText = currentText.trim();
-            if (cleanText) {
-              setSpokenTranscript(cleanText);
-            }
-          };
+              const cleanText = currentText.trim();
+              if (cleanText) {
+                setSpokenTranscript(cleanText);
+              }
+            };
 
-          sr.onerror = (e: any) => {
-            // Mobile devices may yield 'audio-capture' or 'aborted' when getUserMedia locks the mic
-            console.warn("Speech recognition notice (non-fatal):", e.error);
-          };
-
-          sr.start();
-          speechRecognitionRef.current = sr;
-        } catch (e) {
-          console.warn("SpeechRecognition init warning:", e);
+            sr.onerror = () => {};
+            sr.start();
+            speechRecognitionRef.current = sr;
+          } catch {}
         }
       }
 
-      // 2. Request microphone stream with mobile-optimized constraints
+      // 3. Request microphone stream with mobile-optimized constraints
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -229,6 +280,78 @@ export function useRecorder(): RecorderState {
       streamRef.current = stream;
       chunksRef.current = [];
 
+      // 4. Hook live stream to Web Audio Analyser (Real-Time in-stream feature extraction)
+      if (audioCtx) {
+        try {
+          const source = audioCtx.createMediaStreamSource(stream);
+          const analyser = audioCtx.createAnalyser();
+          analyser.fftSize = 1024;
+          analyser.smoothingTimeConstant = 0.2;
+          source.connect(analyser);
+
+          sourceNodeRef.current = source;
+          analyserRef.current = analyser;
+
+          const timeDomain = new Float32Array(analyser.fftSize);
+          const freqData = new Float32Array(analyser.frequencyBinCount);
+          const sampleRate = audioCtx.sampleRate || 44100;
+          const binWidth = (sampleRate / 2) / analyser.frequencyBinCount;
+
+          if (samplerIntervalRef.current) clearInterval(samplerIntervalRef.current);
+
+          samplerIntervalRef.current = setInterval(() => {
+            if (!analyserRef.current) return;
+            analyserRef.current.getFloatTimeDomainData(timeDomain);
+            analyserRef.current.getFloatFrequencyData(freqData);
+
+            const m = liveMetricsRef.current;
+            let sumSq = 0;
+            let zc = 0;
+            for (let i = 0; i < timeDomain.length; i++) {
+              const v = timeDomain[i];
+              const absV = Math.abs(v);
+              if (absV > m.maxPeak) m.maxPeak = absV;
+              sumSq += v * v;
+              if (i > 0) {
+                const prev = timeDomain[i - 1];
+                if ((v >= 0 && prev < 0) || (v < 0 && prev >= 0)) zc++;
+              }
+            }
+            const rms = Math.sqrt(sumSq / timeDomain.length);
+            m.frameCount++;
+
+            if (m.lastEnergy > 0) {
+              m.modulationSum += Math.abs(rms - m.lastEnergy);
+            }
+            m.lastEnergy = rms;
+
+            // Voiced frames accumulation
+            if (rms > 0.012) {
+              m.voicedCount++;
+              m.sumRms += rms;
+              m.sumZcr += zc / (timeDomain.length * 2);
+
+              for (let b = 0; b < freqData.length; b++) {
+                const freq = b * binWidth;
+                const db = freqData[b];
+                if (db > -80) {
+                  const mag = Math.pow(10, db / 20);
+                  m.sumWeightedFreq += freq * mag;
+                  m.sumMag += mag;
+
+                  if (freq < 1000) m.sumLow += mag;
+                  else if (freq < 4000) m.sumMid += mag;
+                  else m.sumHigh += mag;
+                }
+              }
+            }
+          }, 40); // 25 times per second
+        } catch (audioCtxErr) {
+          console.warn("Live acoustic sampler init notice:", audioCtxErr);
+        }
+      }
+
+      // 5. Initialize MediaRecorder with cross-platform MIME type
       const preferredMime = getSupportedAudioMimeType();
       const options: MediaRecorderOptions = preferredMime ? { mimeType: preferredMime } : {};
 
@@ -236,7 +359,6 @@ export function useRecorder(): RecorderState {
       try {
         recorder = new MediaRecorder(stream, options);
       } catch (mimeErr) {
-        // Fallback for Safari/iOS if specific mime is rejected
         recorder = new MediaRecorder(stream);
       }
 
@@ -251,12 +373,44 @@ export function useRecorder(): RecorderState {
         const blob = new Blob(chunksRef.current, { type: finalType });
         setAudioBlob(blob);
         setAudioUrl(URL.createObjectURL(blob));
-        setDurationMs(Date.now() - startedAtRef.current);
+        const duration = Date.now() - startedAtRef.current;
+        setDurationMs(duration);
         setStatus("recorded");
 
         // Clean up hardware microphone stream
         stream.getTracks().forEach((t) => t.stop());
         streamRef.current = null;
+
+        // Finalize Live Stream Acoustic Metrics
+        if (samplerIntervalRef.current) {
+          clearInterval(samplerIntervalRef.current);
+          samplerIntervalRef.current = null;
+        }
+
+        const m = liveMetricsRef.current;
+        const totalBand = m.sumLow + m.sumMid + m.sumHigh;
+        const isSilence = m.voicedCount < 3 || m.maxPeak < 0.02 || duration < 250;
+
+        const metrics: AcousticMetrics = {
+          durationMs: duration,
+          rmsEnergy: m.voicedCount > 0 ? m.sumRms / m.voicedCount : 0,
+          peakEnergy: m.maxPeak,
+          zeroCrossingRate: m.voicedCount > 0 ? m.sumZcr / m.voicedCount : 0,
+          spectralCentroidHz: m.sumMag > 0 ? Math.round(m.sumWeightedFreq / m.sumMag) : 0,
+          lowBandRatio: totalBand > 0 ? Number((m.sumLow / totalBand).toFixed(3)) : 0.33,
+          midBandRatio: totalBand > 0 ? Number((m.sumMid / totalBand).toFixed(3)) : 0.33,
+          highBandRatio: totalBand > 0 ? Number((m.sumHigh / totalBand).toFixed(3)) : 0.33,
+          isSilenceOrNoise: isSilence,
+          trillModulationIndex: m.frameCount > 0 ? Number((m.modulationSum / m.frameCount).toFixed(4)) : 0,
+        };
+
+        setLiveAcousticMetrics(metrics);
+
+        // Disconnect Web Audio graph
+        try { sourceNodeRef.current?.disconnect(); } catch {}
+        try { analyserRef.current?.disconnect(); } catch {}
+        try { audioCtxRef.current?.close(); } catch {}
+        audioCtxRef.current = null;
       };
 
       recorder.onerror = () => {
@@ -267,7 +421,6 @@ export function useRecorder(): RecorderState {
       recorderRef.current = recorder;
       startedAtRef.current = Date.now();
       
-      // Request timeslices so dataavailable fires reliably across mobile browsers
       recorder.start(250);
       setStatus("recording");
     } catch (err) {
@@ -305,10 +458,15 @@ export function useRecorder(): RecorderState {
     cleanupUrl();
     setAudioBlob(null);
     setSpokenTranscript(null);
+    setLiveAcousticMetrics(null);
     setDurationMs(0);
     setStatus("idle");
     setError(null);
     setIsListeningSTT(false);
+    if (samplerIntervalRef.current) {
+      clearInterval(samplerIntervalRef.current);
+    }
+    try { audioCtxRef.current?.close(); } catch {}
   }, [cleanupUrl]);
 
   return {
@@ -320,6 +478,7 @@ export function useRecorder(): RecorderState {
     durationMs,
     isSupported,
     isListeningSTT,
+    liveAcousticMetrics,
     start,
     stop,
     reset,
